@@ -1,0 +1,10 @@
+# Third-party modules need their config section declared where rspamd looks
+# for it. local.d/<module>.conf is only merged for modules that ship a
+# modules.d stub, which a third-party plugin does not — so the section lives
+# here, in the operator-owned rspamd.conf.local.
+swornmail {
+  enabled = true;
+  lib_path = "/etc/rspamd/lua";
+  use_mta_hostname = true;
+  # authserv_id = "mx.example.com";
+}

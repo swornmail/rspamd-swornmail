@@ -1,0 +1,11 @@
+$TTL 60
+@	IN	SOA	ns.invalid. admin.invalid. 1 60 60 60 60
+	IN	NS	ns.invalid.
+
+; Reverse-tree pointer for the enclosing /64 of 2001:db8:f00:1234::a:1
+_sworn.4.3.2.1.0.0.f.0.8.b.d.0.1.0.0.2.ip6.arpa.	IN	TXT	"v=SWORN1; d=mailer.example.com"
+; The operator's policy record, covering that /64 inside a /48
+_prefixes._sworn.mailer.example.com.	IN	TXT	"v=SWORN1; p=2001:db8:f00::/48; u=64"
+; A second operator that publishes t=y, for the testing-mode case
+_sworn.9.9.9.9.0.0.f.0.8.b.d.0.1.0.0.2.ip6.arpa.	IN	TXT	"v=SWORN1; d=trial.example.com"
+_prefixes._sworn.trial.example.com.	IN	TXT	"v=SWORN1; p=2001:db8:f00::/48; u=64; t=y"

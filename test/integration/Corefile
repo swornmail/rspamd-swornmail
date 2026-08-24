@@ -1,0 +1,4 @@
+. {
+    file /zones/db.root
+    errors
+}
