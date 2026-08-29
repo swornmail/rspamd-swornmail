@@ -18,6 +18,13 @@ local GLOBAL_UNICAST_FIRST, GLOBAL_UNICAST_LAST = 0x20, 0x3f
 ip.MIN_PREFIX_LEN = 32
 ip.MAX_PREFIX_LEN = 64
 
+--- OBSERVED_UNIT_LEN is the fallback reputation boundary: the connecting
+--- source's /64. It is its own constant rather than derived from a record's
+--- declared unit on purpose — a publisher-declared unit must not be able to
+--- widen where reputation lands, so a future change to the unit range cannot
+--- silently move this boundary.
+ip.OBSERVED_UNIT_LEN = 64
+
 --- split_groups parses a colon-separated run into 16-bit groups. A trailing
 --- dotted quad (the ::ffff:a.b.c.d form) expands into two groups.
 local function split_groups(s)

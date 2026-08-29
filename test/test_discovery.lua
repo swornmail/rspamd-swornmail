@@ -100,6 +100,25 @@ t.test('skips the PTR lookups when the MTA already confirmed the hostname', func
   t.ok(res.queries <= 4, 'no PTR or forward query spent (queries=' .. tostring(res.queries) .. ')')
 end)
 
+t.test('normalizes operator domains before DNS and reporting', function()
+  local r = fake({ txt = { ['_prefixes._sworn.mailer.example.com'] = { POLICY } } })
+  local res = discovery.run(r, SRC, { verified_hostname = 'MX1.Mailer.Example.COM.' })
+  t.eq(res.outcome, 'pass', 'outcome')
+  t.eq(res.operator, 'mailer.example.com', 'lowercase operator')
+end)
+
+-- A publisher enumerating space it shares cannot move the reputation boundary:
+-- one connection from inside a /32 corroborates one /64, not the aggregate.
+t.test('a coarse declared unit does not widen the observed unit', function()
+  local r = fake({ txt = {
+    ['_prefixes._sworn.mailer.example.com'] = { 'v=SWORN1; p=2001:db8::/32; u=32' },
+  } })
+  local res = discovery.run(r, SRC, { verified_hostname = 'mx1.mailer.example.com' })
+  t.eq(res.outcome, 'pass', 'outcome')
+  t.eq(res.unit, '2001:db8::/32', 'declared unit is reported as the claim')
+  t.eq(res.observed, '2001:db8:f00:1234::/64', 'observed unit is the source /64')
+end)
+
 t.test('reports testing mode separately from the outcome', function()
   local r = fake({ txt = {
     [REV64] = { 'v=SWORN1; d=mailer.example.com' },
