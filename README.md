@@ -163,11 +163,18 @@ disrupting DNS.
 **Bounded work per connection.** At most 10 DNS queries, after which the
 result is `temperror`. Records are parsed strictly: a malformed record, or two
 `v=SWORN1` records at one name, confirms nothing rather than being guessed at.
+The declared unit must be at least as specific as every enumerated prefix, so
+a reputation unit can never extend into space the operator did not attest.
 
 **Reputation semantics.** On `sworn=pass`, key reputation on
-`(operator domain, unit prefix)`. Abuse from an attested prefix should affect
-that whole prefix — that is the point of attestation. Do not attribute a
-*failed* result to the domain named in it.
+`(operator domain, observed unit)`. The module emits two prefixes:
+`policy.unit` is the aggregation the publisher asked for, and
+`policy.observed` is the source `/64` this connection actually corroborated,
+computed from the connection rather than from the record. A signed broad
+prefix is not proof that a shared-hosting tenant controls the provider
+aggregate, so apply consequences to `policy.observed` unless you hold
+independent evidence of a wider control boundary. Do not attribute a *failed*
+result to the domain named in it.
 
 ## Testing
 
@@ -197,8 +204,9 @@ cd ../swornmail-go && go run ./cmd/recorddiff --arm /path/to/lua-arm.sh
   lives in the Go and Rust implementations.
 - **IPv6 only**, by protocol design.
 - **No DNSSEC validation** — the module trusts its resolver. Absent DNSSEC,
-  record spoofing yields at most denial of verification, never impersonation,
-  because an attacker cannot also control the attested prefix.
+  an active attacker able to replace the discovery and policy answers can
+  impersonate an operator. Use a validating resolver where that threat is in
+  scope.
 
 ## License
 

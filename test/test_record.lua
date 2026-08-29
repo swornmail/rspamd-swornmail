@@ -56,6 +56,10 @@ t.test('rejects malformed policy records', function()
     'v=SWORN1; rua=https://evil.example',   -- only mailto: is defined
     'v=SWORN1; rua=',
     'v=SWORN1; rua=mailto:',
+    'v=SWORN1; rua=mailto:a@b.example\r\nBcc:victim@example.net',
+    'v=SWORN1; rua=mailto:a@b.example,c@d.example',
+    'v=SWORN1; rua=mailto:.a@b.example',
+    'v=SWORN1; p=2001:db8:f00:1200::/56; u=48', -- unit extends outside prefix
     'v=SWORN1; p=2001:db8:f00::/48 extra',  -- whitespace inside a value
     'v=SWORN1; noequals',
   }) do
@@ -83,6 +87,7 @@ end)
 
 t.test('parses pointer records', function()
   t.eq(record.parse_pointer('v=SWORN1; d=mailer.example.com'), 'mailer.example.com', 'pointer domain')
+  t.eq(record.parse_pointer('v=SWORN1; d=Mailer.Example.COM'), 'mailer.example.com', 'canonical case')
   for _, bad in ipairs({
     'v=SWORN1', 'd=mailer.example.com', 'v=SWORN1; d=', 'v=SWORN9; d=x.example.com',
     'v=SWORN1; d=mailer..example.com', 'v=SWORN1; d=-bad.example.com',

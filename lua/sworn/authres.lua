@@ -27,10 +27,17 @@ function authres.render(authserv_id, res)
 end
 
 --- properties renders the diagnostic properties shared by pass and testing
---- results. policy.unit is quoted: a prefix contains ':' and '/', which
---- RFC 8601 requires be emitted as a quoted-string.
+--- results. Prefixes are quoted: they contain ':' and '/', which RFC 8601
+--- requires be emitted as a quoted-string.
+---
+--- Both units are emitted because they mean different things and a consumer
+--- reading only the header has no other way to tell them apart. policy.unit is
+--- the aggregation the operator asked for. policy.observed is the source /64
+--- this connection actually corroborated, and is what reputation attaches to
+--- unless the receiver holds independent evidence of wider control.
 function authres.properties(res)
-  return string.format('policy.mode=%s policy.op=%s policy.unit=%q', res.mode, res.operator, res.unit)
+  return string.format('policy.mode=%s policy.op=%s policy.unit=%q policy.observed=%q',
+    res.mode, res.operator, res.unit, res.observed)
 end
 
 --- kind classifies an outcome for symbol selection. Testing is its own kind

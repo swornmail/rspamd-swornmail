@@ -19,6 +19,22 @@ record.DEFAULT_UNIT = 64
 --- shared tag syntax is violated.
 local function split_tags(txt)
   if type(txt) ~= 'string' then return nil end
+  -- A SwornMail record is printable ASCII by construction: domains are LDH,
+  -- prefixes and units are digits and punctuation, rua is a dot-atom. So the
+  -- rule is the simplest one three implementations can agree on exactly --
+  -- reject every byte outside 0x20..0x7E, plus HTAB.
+  --
+  -- 'Whitespace' is where parsers silently disagree: Go's unicode.IsSpace
+  -- covers U+00A0 and U+3000, this module's %s is byte-wise, and Rust's
+  -- is_ascii_whitespace excludes VT. The same record then parses differently
+  -- in three places. Restricting the record to an explicit octet set removes
+  -- the disagreement at its source, and takes CR, LF, NUL, DEL and every
+  -- other C0 control with it.
+  --
+  -- HTAB is admitted because a hand-edited zone file legitimately contains one
+  -- between tags, and all three implementations already strip it there and
+  -- reject it inside a value.
+  if txt:find('[^\9\32-\126]') then return nil end
   local pairs_out, seen, index = {}, {}, 0
   for part in (txt .. ';'):gmatch('([^;]*);') do
     part = part:match('^%s*(.-)%s*$')
@@ -29,6 +45,8 @@ local function split_tags(txt)
       k = k:match('^%s*(.-)%s*$')
       v = v:match('^%s*(.-)%s*$')
       if index == 1 and k ~= 'v' then return nil end
+      -- Only SP and HTAB survive the octet gate above, and those are
+      -- exactly what 'whitespace' means here.
       if v:find('[ \t]') then return nil end
       if seen[k] then return nil end -- a duplicate tag makes the record malformed
       seen[k] = true
@@ -38,6 +56,19 @@ local function split_tags(txt)
   return pairs_out
 end
 record.split_tags = split_tags
+
+local function valid_rua(value)
+  local address = value:match('^mailto:(.+)$')
+  if not address then return false end
+  local localpart, domain = address:match('^([^@]+)@([^@]+)$')
+  if not localpart or not record.valid_domain(domain) then return false end
+  for atom in (localpart .. '.'):gmatch('([^%.]*)%.') do
+    if atom == '' or atom:find("[^A-Za-z0-9!#$%%&'*+/%=?^_`{|}~%-]") then
+      return false
+    end
+  end
+  return true
+end
 
 --- valid_domain enforces the operator-domain syntax: A-label form, <= 253
 --- octets, each label 1..63 LDH not starting or ending with '-'. This rejects
@@ -87,8 +118,12 @@ function record.parse_policy(txt)
       -- no ABNF for this field yet; when it gains one, all three tighten
       -- together through the vector process.
       if not v:match('^%+?%d+$') then return nil end
-      local n = tonumber(v)
-      if n < 1 or n > ip.MAX_PREFIX_LEN then return nil end
+      -- GopherLua's tonumber does not accept a leading '+', although Go and
+      -- Rust integer parsers do. Strip only the sign already admitted by the
+      -- grammar above, and guard nil for numeric strings too large to parse.
+      local numeric = v:sub(1, 1) == '+' and v:sub(2) or v
+      local n = tonumber(numeric)
+      if not n or n < 1 or n > ip.MAX_PREFIX_LEN then return nil end
       out.unit = n
     elseif k == 't' then
       for flag in (v .. ':'):gmatch('([^:]*):') do
@@ -99,13 +134,15 @@ function record.parse_policy(txt)
       -- Only the mailto: scheme is defined. rua is where a receiver would
       -- send aggregate reports, so an unexpected scheme is rejected here
       -- rather than handed onward as a destination.
-      local address = v:match('^mailto:(.+)$')
-      if not address then return nil end
+      if not valid_rua(v) then return nil end
       out.rua = v
     end
     -- Unknown tags are ignored.
   end
   if not have_version then return nil end
+  for _, prefix in ipairs(out.prefixes) do
+    if out.unit < prefix.bits then return nil end
+  end
   return out
 end
 
@@ -124,7 +161,7 @@ function record.parse_pointer(txt)
     end
   end
   if not have_version or not domain or not record.valid_domain(domain) then return nil end
-  return domain
+  return domain:lower()
 end
 
 --- select_sworn returns the single v=SWORN1 record from a TXT RRset. Zero or

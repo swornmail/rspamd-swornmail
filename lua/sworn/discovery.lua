@@ -52,7 +52,7 @@ end
 --- candidate_domains yields the operator-domain candidates for a
 --- forward-confirmed hostname: the hostname itself, then successive parents.
 function discovery.candidate_domains(host, is_public_suffix)
-  host = (host or ''):gsub('%.$', '')
+  host = (host or ''):gsub('%.$', ''):lower()
   local out = {}
   local cur = host
   while cur ~= '' and #out < MAX_CANDIDATES do
@@ -73,6 +73,8 @@ end
 --- confirm checks whether the source falls inside a prefix the candidate
 --- publishes. Returns a result table, or nil plus 'temperror' / nil.
 local function confirm(resolver, budget, domain, source)
+  if not record.valid_domain(domain) then return nil, nil end
+  domain = domain:lower()
   if not spend(budget) then return nil, 'temperror' end
   local txts, err = resolver.txt('_prefixes._sworn.' .. domain)
   if err then return nil, 'temperror' end
@@ -96,7 +98,13 @@ local function confirm(resolver, budget, domain, source)
   return {
     outcome = 'pass',
     operator = domain,
+    -- The unit the publisher asked for: a claim, not evidence.
     unit = ip.format_prefix(ip.masked(source, policy.unit), policy.unit),
+    -- Derived from the source, never from the record. Enumerating a prefix is
+    -- a self-assertion; one connection from inside it does not prove control
+    -- of the rest, so this is the boundary reputation may attach to absent
+    -- independent evidence of control over the whole prefix.
+    observed = ip.format_prefix(ip.masked(source, ip.OBSERVED_UNIT_LEN), ip.OBSERVED_UNIT_LEN),
     mode = 'dns',
     testing = policy.testing,
   }
@@ -148,7 +156,11 @@ function discovery.run(resolver, source_text, opts)
     local ptrs, err = resolver.ptr(source_text)
     if err then return none('temperror') end
     if not ptrs or not ptrs[1] then return none() end
-    host = (ptrs[1]):gsub('%.$', '')
+    host = (ptrs[1]):gsub('%.$', ''):lower()
+
+    -- Reject a hostile PTR value before using it as the target of the
+    -- forward-confirmation query.
+    if not record.valid_domain(host) then return none() end
 
     -- FCrDNS: the name must resolve back to the connecting address, or any
     -- host could name itself into an operator's domain.
@@ -167,6 +179,7 @@ function discovery.run(resolver, source_text, opts)
     if not confirmed then return none() end
   end
 
+  host = (host or ''):gsub('%.$', ''):lower()
   if not record.valid_domain(host) then return none() end
 
   for _, candidate in ipairs(discovery.candidate_domains(host, opts.is_public_suffix)) do
