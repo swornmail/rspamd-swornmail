@@ -18,11 +18,14 @@ not be worse than the status quo.
 A stable reputation key for IPv6 senders. An operator publishing SwornMail
 records is saying "this prefix is one accountable entity, staked on our
 domain" — so instead of reputation on a single address out of 2^64, you get
-reputation on `(operator domain, prefix)`.
+reputation on `(operator domain, observed /64)`, widening to the attested unit
+only where you hold independent evidence of control (see "Reputation
+semantics" below).
 
 ```
 Authentication-Results: mx.example.com; sworn=pass policy.mode=dns
     policy.op=mailer.example.com policy.unit="2001:db8:f00:1234::/64"
+    policy.observed="2001:db8:f00:1234::/64"
 ```
 
 ## Requirements
@@ -136,6 +139,7 @@ result is reported as `none`, carrying the result it would have had:
 Authentication-Results: mx.example.com; sworn=none policy.testing=y
     policy.wouldbe=pass policy.mode=dns policy.op=trial.example.com
     policy.unit="2001:db8:f00:9999::/64"
+    policy.observed="2001:db8:f00:9999::/64"
 ```
 
 Treating that as a pass would stake reputation — credit *and* blame — that the
