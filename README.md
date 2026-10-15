@@ -30,13 +30,14 @@ Authentication-Results: mx.example.com; sworn=pass policy.mode=dns
 
 ## Requirements
 
-- rspamd 3.x or later (developed and tested against 4.1)
+- rspamd 3.x or later (developed against 4.1, integration-tested against 4.2.2)
 - Senders reaching you over IPv6 — Mode 1 attests IPv6 space only
 - A working resolver; the module spends at most 10 DNS queries per connection
 
 ## Install
 
-Three pieces: the module, the protocol library it uses, and a config section.
+Four pieces: the module, the protocol library it uses, a config section, and
+a `milter_headers` config that removes forged results.
 
 ```sh
 install -d /etc/rspamd/plugins.d /etc/rspamd/lua/sworn
@@ -56,11 +57,25 @@ swornmail {
 }
 ```
 
+rspamd's stock config doesn't remove inbound `Authentication-Results` fields,
+so a forged `sworn=pass` would reach your users' mailboxes. If you don't have
+`/etc/rspamd/local.d/milter_headers.conf` yet, install the example:
+
+```sh
+install -m 0644 conf/milter_headers.conf /etc/rspamd/local.d/milter_headers.conf
+```
+
+If you already have one, merge in its settings; see
+[Removing forged results](#removing-forged-results).
+
 Restart rspamd. You should see, once, at startup:
 
 ```
 swornmail: Mode-1 attestation enabled, authserv-id mx.example.com
 ```
+
+and no line starting `swornmail: forged sworn= results can reach mailboxes`.
+If one shows up, it names the `milter_headers` setting to fix.
 
 Check it end to end against a sender you know publishes records:
 
@@ -113,17 +128,88 @@ than one, and consumers parse them all.
 The module adds that field itself, and adds nothing for local or
 authenticated senders: their mail isn't arriving from another ADMD.
 
-It doesn't remove anything. At a border MTA, forged inbound results are
-removed by `milter_headers`' `authentication-results` routine, which by default
-deletes every inbound `Authentication-Results` field before rspamd adds its
-own. **Keep that routine on**, as in
-[`conf/milter_headers.conf`](conf/milter_headers.conf); without it, a forged
-`sworn=pass` claiming your authserv-id passes straight through.
-
 Earlier versions of this README had you add a `sworn-ar` custom routine to
 `milter_headers.conf`. Remove it. `milter_headers` lets a custom routine's
 output replace the field its own routine queued under the same name, so that
 setup silently dropped rspamd's SPF, DKIM and DMARC results.
+
+### Removing forged results
+
+Anyone upstream can write `Authentication-Results: mx.example.com; sworn=pass`
+into a message. A border MTA has to remove fields claiming its own
+authserv-id (RFC 8601 §5), or nothing downstream can tell the forged field
+from yours.
+
+The module removes nothing itself. `milter_headers`' `authentication-results`
+routine does that: it deletes every inbound `Authentication-Results` field
+before rspamd adds its own, which also deals with forged SPF, DKIM and DMARC
+results. rspamd's stock config doesn't turn the routine on, and when it is on
+it skips authenticated and local senders. The example
+[`conf/milter_headers.conf`](conf/milter_headers.conf) covers both:
+
+```ucl
+use = ["authentication-results"];
+authenticated_headers = ["authentication-results"];
+local_headers = ["authentication-results"];
+
+routines {
+  authentication-results {
+    add_smtp_user = false;
+  }
+}
+```
+
+- `authenticated_headers`: without it, anyone with a stolen password can send
+  your local users a forged `sworn=pass`.
+- `local_headers`: rspamd counts private and loopback addresses as local, and
+  behind a proxy or NAT that's every connection. If rspamd sits behind
+  another MTA of yours whose results you rely on, those are deleted too.
+- `add_smtp_user = false`: covering authenticated senders also puts rspamd's
+  own field on the mail they send out, and by default that field names their
+  login (`smtp.auth=alice`).
+
+To check it, send rspamd a forged field as an authenticated sender:
+
+```sh
+printf 'Authentication-Results: mx.example.com; sworn=pass\nFrom: a@b.example\n\nhi\n' |
+  rspamc --json --ip=2001:db8::1 --user=alice --from=alice@example.com |
+  grep -A11 '"milter"'
+```
+
+```
+    "milter": {
+        "add_headers": {
+            "Authentication-Results": {
+                "order": 1,
+                "value": "mx.example.com;\n\tauth=pass smtp.mailfrom=alice@example.com"
+            }
+        },
+        "remove_headers": {
+            "X-Spam": 0,
+            "Authentication-Results": 0
+        }
+    },
+```
+
+Key order can differ between runs. `"Authentication-Results": 0` tells the
+MTA to delete every inbound field of that name, and the field rspamd adds
+doesn't name the login. Without the example config, `remove_headers` has no
+`Authentication-Results` entry.
+
+At startup the module reads the `milter_headers` config and logs a warning
+for each setting there that lets a forged result through, for example:
+
+```
+swornmail: forged sworn= results can reach mailboxes: forged results from authenticated senders are kept; add authentication-results to authenticated_headers
+```
+
+It can't see per-message overrides from the settings module, which can turn
+the routine off at runtime.
+
+Don't narrow the deletion with `remove_ar_from`. It matches only a plain name
+at the start of the field, so a forged `(c) mx.example; sworn=pass` or
+`"mx.example"; sworn=pass` isn't recognised and survives (checked against
+rspamd 4.2.2).
 
 ### Testing mode in the header
 
@@ -145,12 +231,10 @@ operator explicitly declined. Anything consuming these headers must key on
 
 **Strip inbound results at the trust boundary.** An `Authentication-Results`
 field claiming your own authserv-id is trivially forged by anyone upstream and
-must not survive into your ADMD (RFC 8601 §5). At a border MTA, keep
-`milter_headers`' `authentication-results` routine on with its default, which
-deletes every inbound field. Avoid narrowing it with `remove_ar_from`: that
-matches only a plain name at the start of the field, so a forged
-`(c) mx.example; sworn=pass` or `"mx.example"; sworn=pass` is not recognised
-and survives (checked against rspamd 4.2.2).
+must not survive into your ADMD (RFC 8601 §5). rspamd's stock config doesn't
+remove it; use the example `milter_headers` config, which deletes every
+inbound field for every sender. See
+[Removing forged results](#removing-forged-results).
 
 **Failures never count against a sender.** `sworn=fail`, `temperror`, and
 `permerror` all identify *no accountable party*, so the protocol forbids
@@ -186,9 +270,17 @@ result to the domain named in it.
 ```
 
 The unit suite covers the address arithmetic, record parsing, the discovery
-walk with an injected resolver, and header rendering. The integration test
-stands up rspamd and CoreDNS in containers and asserts each outcome reaches
-the right symbol.
+walk with an injected resolver, header rendering, and the startup check of
+the `milter_headers` config. The integration test stands up rspamd and
+CoreDNS in containers and asserts each outcome reaches the right symbol and
+header, and that the example `milter_headers` config removes forged results
+from remote, authenticated and local senders. Both run in CI.
+
+The integration test pins rspamd by digest. To try another release:
+
+```sh
+RSPAMD_IMAGE=rspamd/rspamd:latest ./test/integration/run.sh
+```
 
 This module is a **third implementation** of rules the Go and Rust verifiers
 already enforce, so it is also driven by a differential harness — every record
