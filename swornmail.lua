@@ -19,6 +19,7 @@ local rspamd_dns = require 'rspamd_dns'
 local rspamd_logger = require 'rspamd_logger'
 local rspamd_util = require 'rspamd_util'
 local lua_util = require 'lua_util'
+local lua_mime = require 'lua_mime'
 
 local N = 'swornmail'
 
@@ -36,8 +37,6 @@ local settings = {
   -- stripping rule keys on. Set it explicitly when rspamd's hostname is not
   -- the ADMD's public identity.
   authserv_id = nil,
-  -- Where the rendered AR value is left for the milter_headers routine.
-  mempool_variable = 'sworn_ar',
   -- Trust the MTA's rDNS name when it supplies one. Under a Postfix milter a
   -- non-nil hostname has already been forward-confirmed, so accepting it
   -- saves two queries. Set false to always confirm here instead.
@@ -126,11 +125,21 @@ local function check_sworn(task)
   end
   task:insert_result(symbol, 1.0, option)
 
-  -- Hand the rendered value to the milter_headers custom routine: rspamd's
-  -- own Authentication-Results generator has a fixed method list and no way
-  -- to register another, so the sworn= result travels as a second AR field,
-  -- which RFC 8601 section 4 explicitly permits.
-  task:get_mempool():set_variable(settings.mempool_variable, authres.render(settings.authserv_id, res))
+  -- rspamd's own Authentication-Results generator has a fixed method list,
+  -- so the sworn= result goes out as a second field, which RFC 8601 section 4
+  -- permits. It is added here rather than from a milter_headers custom
+  -- routine: milter_headers lets a custom routine's output replace whatever
+  -- its built-in routine queued under the same header name, which dropped
+  -- rspamd's SPF, DKIM and DMARC results. Local and authenticated senders are
+  -- skipped, as milter_headers does by default: that mail isn't arriving
+  -- from another ADMD.
+  if not task:get_user() and not from_ip:is_local() then
+    lua_mime.modify_headers(task, {
+      add = {
+        ['Authentication-Results'] = { order = 1, value = authres.render(settings.authserv_id, res) },
+      },
+    })
+  end
 
   lua_util.debugm(N, task, 'sworn=%s operator=%s queries=%s',
     res.outcome, res.operator or '-', res.queries)

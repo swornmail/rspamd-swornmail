@@ -79,7 +79,6 @@ All settings, with their defaults:
 | `lib_path` | `/etc/rspamd/lua` | Where `sworn/*.lua` was installed |
 | `authserv_id` | this host's name | Identity stamped in `Authentication-Results` |
 | `use_mta_hostname` | `true` | Trust the MTA's rDNS name (see below) |
-| `mempool_variable` | `sworn_ar` | Where the AR value is left for `milter_headers` |
 | `symbol_pass` | `SWORN_PASS` | Symbol for a confirmed operator |
 | `symbol_testing` | `SWORN_TESTING` | Symbol for an operator still in testing mode |
 | `symbol_none` | `SWORN_NONE` | No attestation found |
@@ -111,24 +110,20 @@ and no way to register another, so the `sworn=` result is emitted as a
 **second** `Authentication-Results` field. RFC 8601 §4 explicitly permits more
 than one, and consumers parse them all.
 
-Add to `/etc/rspamd/local.d/milter_headers.conf`, merging `sworn-ar` into
-whatever routines you already use:
+The module adds that field itself, and adds nothing for local or
+authenticated senders: their mail isn't arriving from another ADMD.
 
-```ucl
-use = ["authentication-results", "sworn-ar"];
+It doesn't remove anything. At a border MTA, forged inbound results are
+removed by `milter_headers`' `authentication-results` routine, which by default
+deletes every inbound `Authentication-Results` field before rspamd adds its
+own. **Keep that routine on**, as in
+[`conf/milter_headers.conf`](conf/milter_headers.conf); without it, a forged
+`sworn=pass` claiming your authserv-id passes straight through.
 
-custom {
-  sworn-ar = <<EOD
-return function(task, common_meta)
-  local value = task:get_mempool():get_variable('sworn_ar')
-  if not value then
-    return nil, {}, {}, common_meta
-  end
-  return nil, {['Authentication-Results'] = value}, {}, common_meta
-end
-EOD;
-}
-```
+Earlier versions of this README had you add a `sworn-ar` custom routine to
+`milter_headers.conf`. Remove it. `milter_headers` lets a custom routine's
+output replace the field its own routine queued under the same name, so that
+setup silently dropped rspamd's SPF, DKIM and DMARC results.
 
 ### Testing mode in the header
 
@@ -150,9 +145,12 @@ operator explicitly declined. Anything consuming these headers must key on
 
 **Strip inbound results at the trust boundary.** An `Authentication-Results`
 field claiming your own authserv-id is trivially forged by anyone upstream and
-must not survive into your ADMD (RFC 8601 §5). rspamd can remove them for you
-via `milter_headers`'s `remove_ar_from` setting — configure it with your own
-hostnames if this rspamd is a border MTA.
+must not survive into your ADMD (RFC 8601 §5). At a border MTA, keep
+`milter_headers`' `authentication-results` routine on with its default, which
+deletes every inbound field. Avoid narrowing it with `remove_ar_from`: that
+matches only a plain name at the start of the field, so a forged
+`(c) mx.example; sworn=pass` or `"mx.example"; sworn=pass` is not recognised
+and survives (checked against rspamd 4.2.2).
 
 **Failures never count against a sender.** `sworn=fail`, `temperror`, and
 `permerror` all identify *no accountable party*, so the protocol forbids
