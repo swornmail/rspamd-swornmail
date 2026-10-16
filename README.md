@@ -94,6 +94,7 @@ All settings, with their defaults:
 | `lib_path` | `/etc/rspamd/lua` | Where `sworn/*.lua` was installed |
 | `authserv_id` | this host's name | Identity stamped in `Authentication-Results` |
 | `use_mta_hostname` | `true` | Trust the MTA's rDNS name (see below) |
+| `ineligible_prefixes` | `[]` | IPv6 prefixes never matched to an operator. **If rspamd sees IPv4 clients through NAT64 or SIIT, list the translation prefix**: every translated client appears inside it. A malformed entry disables the module, with an error in the log |
 | `symbol_pass` | `SWORN_PASS` | Symbol for a confirmed operator |
 | `symbol_testing` | `SWORN_TESTING` | Symbol for an operator still in testing mode |
 | `symbol_none` | `SWORN_NONE` | No attestation found |

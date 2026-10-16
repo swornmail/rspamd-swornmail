@@ -27,6 +27,37 @@ local function fake(spec)
   }
 end
 
+-- A receiver behind its own NAT64 prefix configures it as ineligible: the
+-- records that give a pass give none from inside it, with no DNS at all.
+t.test('a configured ineligible prefix ends as none without queries', function()
+  local spec = { txt = {
+    [REV64] = { 'v=SWORN1; d=mailer.example.com' },
+    ['_prefixes._sworn.mailer.example.com'] = { POLICY },
+  } }
+  local list, err = discovery.parse_ineligible({ '2001:db8:f00:1234::/64' })
+  t.ok(list ~= nil, 'parses the configured list: ' .. tostring(err))
+  local r = fake(spec)
+  local res = discovery.run(r, SRC, { ineligible = list })
+  t.eq(res.outcome, 'none', 'outcome')
+  t.eq(r.calls.n, 0, 'no queries')
+  -- The same records from outside the configured prefix still pass.
+  t.eq(discovery.run(fake(spec), SRC, { ineligible = discovery.parse_ineligible({ '2001:db8:f00:abcd::/64' }) }).outcome, 'pass', 'elsewhere passes')
+end)
+
+t.test('rejects a malformed ineligible prefix list', function()
+  for _, bad in ipairs({ { '192.0.2.0/24' }, { 'nonsense' }, { '2001:db8::' }, { 42 } }) do
+    t.is_nil(discovery.parse_ineligible(bad), 'reject ' .. tostring(bad[1]))
+  end
+  t.ok(discovery.parse_ineligible({}) ~= nil, 'an empty list is fine')
+  -- A map-shaped setting must not quietly become an empty list.
+  t.is_nil(discovery.parse_ineligible({ nat64 = '64:ff9b:abcd::/96' }), 'reject a map')
+  t.is_nil(discovery.parse_ineligible({ '64:ff9b:abcd::/96', extra = '2001:db8::/48' }), 'reject a list with extra keys')
+  t.is_nil(discovery.parse_ineligible(42), 'reject a number')
+  local one = discovery.parse_ineligible('64:ff9b:abcd::/96')
+  t.ok(one ~= nil and #one == 1, 'a bare string is one prefix')
+  t.eq(#discovery.parse_ineligible(nil), 0, 'unset is an empty list')
+end)
+
 t.test('confirms through the reverse-tree pointer', function()
   local r = fake({ txt = {
     [REV64] = { 'v=SWORN1; d=mailer.example.com' },
