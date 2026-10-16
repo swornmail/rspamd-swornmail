@@ -125,15 +125,20 @@ function discovery.parse_ineligible(list)
   if type(list) ~= 'table' then return nil, 'not a list of prefixes' end
   -- ipairs would stop at the first gap and silently drop a map-shaped
   -- setting ({ nat64 = '...' }), running with an empty list. Every key must
-  -- be a position 1..n.
-  local n = #list
+  -- be a position 1..n, and there must be exactly n of them: with a hole,
+  -- #list can still report the far end while ipairs stops at the hole, and
+  -- every prefix past it would be dropped without a word.
+  local n, count = #list, 0
   for k in pairs(list) do
     if type(k) ~= 'number' or k < 1 or k > n or k % 1 ~= 0 then
       return nil, 'ineligible_prefixes must be a list, not a map'
     end
+    count = count + 1
   end
+  if count ~= n then return nil, 'ineligible_prefixes has a gap' end
   local out = {}
-  for _, item in ipairs(list) do
+  for i = 1, n do
+    local item = list[i]
     if type(item) ~= 'string' then return nil, 'not a string' end
     local addr, bits = ip.parse_prefix(item)
     if not addr then return nil, 'not an IPv6 prefix: ' .. item end

@@ -53,6 +53,11 @@ t.test('rejects a malformed ineligible prefix list', function()
   t.is_nil(discovery.parse_ineligible({ nat64 = '64:ff9b:abcd::/96' }), 'reject a map')
   t.is_nil(discovery.parse_ineligible({ '64:ff9b:abcd::/96', extra = '2001:db8::/48' }), 'reject a list with extra keys')
   t.is_nil(discovery.parse_ineligible(42), 'reject a number')
+  -- A hole leaves #list at 3 while ipairs stops at 1, which would drop the
+  -- third prefix and let traffic from inside it be attributed after all.
+  local holed = { '64:ff9b:abcd::/96', '2001:db8:1::/48', '2001:db8:2::/48' }
+  holed[2] = nil
+  t.is_nil(discovery.parse_ineligible(holed), 'reject a list with a hole')
   local one = discovery.parse_ineligible('64:ff9b:abcd::/96')
   t.ok(one ~= nil and #one == 1, 'a bare string is one prefix')
   t.eq(#discovery.parse_ineligible(nil), 0, 'unset is an empty list')
