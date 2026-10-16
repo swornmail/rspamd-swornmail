@@ -56,7 +56,8 @@ end
 package.path = settings.lib_path .. '/?.lua;' .. package.path
 local ok_lib, discovery = pcall(require, 'sworn.discovery')
 local ok_ar, authres = pcall(require, 'sworn.authres')
-if not ok_lib or not ok_ar then
+local ok_strip, stripping = pcall(require, 'sworn.stripping')
+if not ok_lib or not ok_ar or not ok_strip then
   -- A half-installed module must not take rspamd down with it.
   lua_util.disable_module(N, 'config')
   rspamd_logger.errx(rspamd_config,
@@ -175,3 +176,10 @@ for _, name in ipairs({
 end
 
 rspamd_logger.infox(rspamd_config, 'swornmail: Mode-1 attestation enabled, authserv-id %s', settings.authserv_id)
+
+-- Removing forged inbound results is milter_headers' job, and rspamd's stock
+-- config doesn't do it. That can't be fixed from here, but it shouldn't go
+-- unnoticed.
+for _, gap in ipairs(stripping.gaps(rspamd_config:get_all_opt('milter_headers'))) do
+  rspamd_logger.warnx(rspamd_config, 'swornmail: forged sworn= results can reach mailboxes: %s', gap)
+end

@@ -1,0 +1,41 @@
+name: CI
+
+# Runs the unit suite and the integration test on each push to main and each
+# pull request. Until this existed only the public-boundary check ran here,
+# so nothing showed when a change broke the module under a real rspamd.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Ubuntu's own package, so the suite doesn't fall back to a
+      # third-party LuaJIT image.
+      - name: Install LuaJIT
+        run: sudo apt-get update -q && sudo apt-get install -y -q luajit
+
+      - name: Unit tests
+        run: ./run-tests.sh
+
+  integration:
+    # The module in a real rspamd, pinned by digest in run.sh, with a real
+    # resolver serving planted records. Also checks that the shipped
+    # milter_headers config removes forged results from every kind of sender.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: rspamd integration
+        run: sh test/integration/run.sh
