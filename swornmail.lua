@@ -41,6 +41,11 @@ local settings = {
   -- non-nil hostname has already been forward-confirmed, so accepting it
   -- saves two queries. Set false to always confirm here instead.
   use_mta_hostname = true,
+  -- IPv6 prefixes never matched to an operator: your NAT64 or SIIT
+  -- translation prefixes, and any of your own relays that carry outside
+  -- traffic. Every translated client appears inside such a prefix, so a
+  -- record covering it would otherwise vouch for all of them.
+  ineligible_prefixes = {},
 }
 
 local opts = rspamd_config:get_all_opt(N)
@@ -63,6 +68,15 @@ if not ok_lib or not ok_ar or not ok_strip then
   rspamd_logger.errx(rspamd_config,
     'swornmail: cannot load the sworn library from %s — check lib_path (%s)',
     settings.lib_path, discovery)
+  return
+end
+
+-- A bad prefix disables the module rather than running without the list the
+-- operator meant to give: results stop, which is never worse than none.
+local ineligible, ineligible_err = discovery.parse_ineligible(settings.ineligible_prefixes)
+if not ineligible then
+  lua_util.disable_module(N, 'config')
+  rspamd_logger.errx(rspamd_config, 'swornmail: ineligible_prefixes: %s', ineligible_err)
   return
 end
 
@@ -117,6 +131,7 @@ local function check_sworn(task)
 
   local res = discovery.run(make_resolver(task), tostring(from_ip), {
     verified_hostname = verified_hostname(task),
+    ineligible = ineligible,
   })
 
   local symbol = settings['symbol_' .. authres.kind(res)]

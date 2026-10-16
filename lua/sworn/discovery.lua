@@ -113,6 +113,35 @@ end
 --- run performs discovery for a source address string.
 --- Returns a table: {outcome='pass'|'none'|'temperror', operator, unit, mode,
 --- testing, queries}.
+--- parse_ineligible reads the receiver's own extra ineligible prefixes
+--- (its NAT64 or SIIT translation prefixes, and any of its relays) from
+--- configuration. Returns a list of { addr, bits }, or nil and an error for
+--- anything that is not an IPv6 prefix, so a typo stops the module instead
+--- of letting translated traffic be attributed as one sender.
+function discovery.parse_ineligible(list)
+  if list == nil then return {} end
+  -- One prefix may be given as a bare string.
+  if type(list) == 'string' then list = { list } end
+  if type(list) ~= 'table' then return nil, 'not a list of prefixes' end
+  -- ipairs would stop at the first gap and silently drop a map-shaped
+  -- setting ({ nat64 = '...' }), running with an empty list. Every key must
+  -- be a position 1..n.
+  local n = #list
+  for k in pairs(list) do
+    if type(k) ~= 'number' or k < 1 or k > n or k % 1 ~= 0 then
+      return nil, 'ineligible_prefixes must be a list, not a map'
+    end
+  end
+  local out = {}
+  for _, item in ipairs(list) do
+    if type(item) ~= 'string' then return nil, 'not a string' end
+    local addr, bits = ip.parse_prefix(item)
+    if not addr then return nil, 'not an IPv6 prefix: ' .. item end
+    out[#out + 1] = { addr = ip.masked(addr, bits), bits = bits }
+  end
+  return out
+end
+
 function discovery.run(resolver, source_text, opts)
   opts = opts or {}
   local budget = new_budget()
@@ -124,6 +153,11 @@ function discovery.run(resolver, source_text, opts)
   -- Mode 1 attests IPv6 space only, and an ineligible source is never inside
   -- an attested prefix. Neither is an error: there is simply nothing to find.
   if not source or not ip.eligible_source(source) then return none() end
+  -- Nor is a source inside one of the receiver's configured prefixes: behind
+  -- a translation prefix many unrelated clients share one range.
+  for _, p in ipairs(opts.ineligible or {}) do
+    if ip.contains(p.addr, p.bits, source) then return none() end
+  end
 
   -- Step 1: reverse-tree pointer, more specific first.
   for _, bits in ipairs(REVERSE_LENGTHS) do
