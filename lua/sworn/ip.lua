@@ -75,6 +75,9 @@ function ip.parse(s)
   local groups
   if dbl then
     if s:find('::', dbl + 1, true) then return nil end -- at most one '::'
+    -- An embedded IPv4 address may only end the address. split_groups checks
+    -- each side of '::' on its own, so a quad just before the gap would pass.
+    if s:sub(1, dbl - 1):find('.', 1, true) then return nil end
     local left = split_groups(s:sub(1, dbl - 1))
     local right = split_groups(s:sub(dbl + 2))
     if not left or not right then return nil end

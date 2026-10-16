@@ -32,6 +32,9 @@ t.test('rejects malformed addresses', function()
     'gggg::1', '2001:db8::1%eth0', '[2001:db8::1]', '2001:db8::12345',
     '1.2.3.4', '::ffff:1.2.3', '::ffff:256.0.0.1', '::ffff:1.2.3.04',
     ':1:2:3:4:5:6:7', '1:2:3:4:5:6:7:', '2001:db8::1:',
+    -- An embedded IPv4 address may only end the address, so it can't sit
+    -- before '::' either (Go and Rust already reject this).
+    '32.1.13.184::', '32.1.13.184::1', '1:2.3.4.5::',
   }) do
     t.is_nil(ip.parse(bad), 'reject ' .. bad)
   end

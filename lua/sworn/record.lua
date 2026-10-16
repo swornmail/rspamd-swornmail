@@ -44,6 +44,9 @@ local function split_tags(txt)
       if not k then return nil end
       k = k:match('^%s*(.-)%s*$')
       v = v:match('^%s*(.-)%s*$')
+      -- Every tag needs a name. An empty one used to pass as an unknown tag
+      -- here and in Go, while the Rust verifier rejected the record.
+      if k == '' then return nil end
       if index == 1 and k ~= 'v' then return nil end
       -- Only SP and HTAB survive the octet gate above, and those are
       -- exactly what 'whitespace' means here.
@@ -111,18 +114,12 @@ function record.parse_policy(txt)
         end
       end
     elseif k == 'u' then
-      -- A leading '+' is accepted because both reference implementations
-      -- accept it — Go's strconv.Atoi and Rust's integer FromStr each allow a
-      -- sign — and a third implementation that is stricter than the two it
-      -- must agree with produces divergence, not correctness. The draft has
-      -- no ABNF for this field yet; when it gains one, all three tighten
-      -- together through the vector process.
-      if not v:match('^%+?%d+$') then return nil end
-      -- GopherLua's tonumber does not accept a leading '+', although Go and
-      -- Rust integer parsers do. Strip only the sign already admitted by the
-      -- grammar above, and guard nil for numeric strings too large to parse.
-      local numeric = v:sub(1, 1) == '+' and v:sub(2) or v
-      local n = tonumber(numeric)
+      -- The draft's ABNF: one to three digits, no sign, no leading zero. Go
+      -- and Rust tightened to the same rule together with this module, so
+      -- "+64" and "064" are malformed everywhere rather than read
+      -- differently by each parser.
+      if not v:match('^[1-9]%d?%d?$') then return nil end
+      local n = tonumber(v)
       if not n or n < 1 or n > ip.MAX_PREFIX_LEN then return nil end
       out.unit = n
     elseif k == 't' then

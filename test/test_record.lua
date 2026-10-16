@@ -49,6 +49,13 @@ t.test('rejects malformed policy records', function()
     'v=SWORN1; u=65',                       -- unit above range
     'v=SWORN1; u=-1',
     'v=SWORN1; u=abc',
+    -- The ABNF: digits only, no sign, no leading zero; a tag has a name.
+    'v=SWORN1; p=2001:db8:f00::/48; u=+64',
+    'v=SWORN1; p=2001:db8:f00::/48; u=064',
+    'v=SWORN1; p=2001:db8:f00::/48; u=0064',
+    'v=SWORN1; p=2001:db8:f00::/048',
+    'v=SWORN1; p=2001:db8:f00::/+48',
+    'v=SWORN1; p=2001:db8:f00::/48; =x',
     'v=SWORN1; p=2001:db8::/16',            -- prefix shorter than the floor
     'v=SWORN1; p=2001:db8:f00::1/48',       -- not masked
     'v=SWORN1; p=fd00::/48',                -- outside global unicast
