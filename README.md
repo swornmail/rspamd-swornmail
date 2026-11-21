@@ -106,6 +106,14 @@ By default the module does its own rDNS check: it looks up the PTR of the
 connecting address and confirms that the name resolves back to it. That costs
 two of the ten queries.
 
+Those two queries can change a result, not only add to its cost. A walk that
+fitted in ten queries with the MTA's hostname can need more without it, and a
+walk that needs an eleventh query ends in `temperror`. For example: both
+reverse pointers name domains whose policies do not cover the source, and the
+fifth candidate from the hostname publishes one that does. With the MTA's
+hostname that is nine queries and a pass. With the module's own check it is
+eleven, so the result is `temperror`.
+
 `use_mta_hostname = true` skips both and takes the client hostname the scan
 request carries instead. rspamd does not check that name. Whoever sends the
 scan request picks it, so the setting is only safe when every client of the
@@ -236,6 +244,12 @@ resets the removal for the same header name, such as `remove-headers` with
 `"Authentication-Results" = 1`. `milter_headers` keeps one removal instruction
 per header name and the last routine to set it wins, so that would keep every
 forged field but the first.
+
+The check goes by the instruction left after the last routine, so a routine
+that narrows the removal is not reported when a later one sets it back to `0`.
+It works that out for authenticated and local senders separately: a routine
+that sets the removal back counts only for the senders it is not skipped for,
+and only if it does so for every message.
 
 It can't see per-message overrides from the settings module, which can turn
 the routine off at runtime, or what a `custom` routine removes, since that is

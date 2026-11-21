@@ -82,6 +82,75 @@ t.test('reports every config that keeps forged results', function()
         ['remove-headers'] = { headers = { ['authentication-results'] = 1 } },
       },
     }), 'remove-headers runs after' },
+    -- The last routine to write decides, so setting the removal back to 0
+    -- does not help when a narrowing routine runs after that.
+    { 'restored, then narrowed again', with({
+      use = { 'authentication-results', 'remove-header', 'remove-headers' },
+      routines = {
+        ['remove-header'] = { header = 'Authentication-Results', remove = 0 },
+        ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+      },
+    }), 'remove-headers runs after' },
+    -- milter_headers skips remove-header for an authenticated sender here
+    -- and still runs the other two, so a compromised account sends two
+    -- forged fields and the second one stays.
+    { 'restored only for senders who are not authenticated', with({
+      use = { 'authentication-results', 'remove-headers', 'remove-header' },
+      authenticated_headers = { 'authentication-results', 'remove-headers' },
+      local_headers = { 'authentication-results', 'remove-headers', 'remove-header' },
+      routines = {
+        ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+        ['remove-header'] = { header = 'Authentication-Results', remove = 0 },
+      },
+    }), 'for authenticated senders' },
+    { 'restored only for senders that are not local', with({
+      use = { 'authentication-results', 'remove-headers', 'remove-header' },
+      authenticated_headers = { 'authentication-results', 'remove-headers', 'remove-header' },
+      local_headers = { 'authentication-results', 'remove-headers' },
+      routines = {
+        ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+        ['remove-header'] = { header = 'Authentication-Results', remove = 0 },
+      },
+    }), 'for local addresses' },
+    -- No routine restores full removal for anyone here, so the advice must
+    -- not send the operator looking for one.
+    { 'narrowed differently for authenticated senders', with({
+      use = { 'authentication-results', 'remove-headers', 'remove-header' },
+      authenticated_headers = { 'authentication-results', 'remove-headers' },
+      local_headers = { 'authentication-results', 'remove-headers', 'remove-header' },
+      routines = {
+        ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+        ['remove-header'] = { header = 'Authentication-Results', remove = 2 },
+      },
+    }), 'it is the last routine that runs for them' },
+    -- x-spam-level queues its removal only for a message scoring 1 or more,
+    -- and the attacker's forged message need not.
+    { 'restored only for some messages', with({
+      use = { 'authentication-results', 'remove-headers', 'x-spam-level' },
+      routines = {
+        ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+        ['x-spam-level'] = { header = 'Authentication-Results', remove = 0 },
+      },
+    }), 'remove-headers runs after' },
+    -- The custom routine runs instead of remove-header, and what it removes
+    -- is not in the config.
+    { 'restored by a routine a custom one replaces', with({
+      use = { 'authentication-results', 'remove-headers', 'remove-header' },
+      custom = { ['remove-header'] = 'return function() end' },
+      routines = {
+        ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+        ['remove-header'] = { header = 'Authentication-Results', remove = 0 },
+      },
+    }), 'remove-headers runs after' },
+    -- Nothing is queued by authentication-results, so the earlier entry
+    -- stands.
+    { 'removal turned off after an earlier routine narrowed it', with({
+      use = { 'remove-headers', 'authentication-results' },
+      routines = {
+        ['authentication-results'] = { remove = false },
+        ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+      },
+    }), 'remove = false' },
     -- A compromised account can forge results for local recipients.
     { 'authenticated senders skipped', with({ authenticated_headers = {} }), 'authenticated_headers' },
     -- Behind a proxy or NAT every connection looks local, so this can cover
@@ -114,6 +183,44 @@ t.test('accepts other ways of stripping for every sender', function()
     use = { 'authentication-results', 'remove-headers' },
     routines = { ['remove-headers'] = { headers = { ['Authentication-Results'] = 0, ['X-Old'] = 1 } } },
   })), 0, 'a later routine that also removes every field')
+  -- The last routine to write decides: rspamd is sent "remove every field",
+  -- so the narrowed entry in between never reaches the MTA.
+  t.eq(#stripping.gaps(with({
+    use = { 'authentication-results', 'remove-headers', 'remove-header' },
+    authenticated_headers = { 'authentication-results', 'remove-headers', 'remove-header' },
+    local_headers = { 'authentication-results', 'remove-headers', 'remove-header' },
+    routines = {
+      ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+      ['remove-header'] = { header = 'Authentication-Results', remove = 0 },
+    },
+  })), 0, 'narrowed, then set back to every field')
+  -- The same with no routine skipped for anyone.
+  t.eq(#stripping.gaps({
+    use = { 'authentication-results', 'remove-headers', 'remove-header' },
+    skip_authenticated = false, skip_local = false,
+    routines = {
+      ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+      ['remove-header'] = { header = 'Authentication-Results', remove = 0 },
+    },
+  }), 0, 'narrowed, then set back, with no sender skipped')
+  -- The narrowing routine is skipped for the same senders as the one that
+  -- sets it back, so neither kind is left with the narrowed entry.
+  t.eq(#stripping.gaps(with({
+    use = { 'authentication-results', 'remove-headers', 'remove-header' },
+    routines = {
+      ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } },
+      ['remove-header'] = { header = 'Authentication-Results', remove = 0 },
+    },
+  })), 0, 'narrowed and set back by routines skipped for the same senders')
+  t.eq(#stripping.gaps(with({
+    use = { 'authentication-results', 'remove-headers' },
+    authenticated_headers = { 'authentication-results', 'remove-headers' },
+    local_headers = { 'authentication-results', 'remove-headers' },
+    routines = {
+      ['authentication-results'] = { remove = 1 },
+      ['remove-headers'] = { headers = { ['Authentication-Results'] = 0 } },
+    },
+  })), 0, 'the routine\'s own narrowed removal set back by a later one')
   -- Another spelling is a separate entry in the removal table, so the
   -- "remove every field" entry is still sent; checked against 4.2.2.
   t.eq(#stripping.gaps(with({
