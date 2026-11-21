@@ -40,6 +40,22 @@ function authres.properties(res)
     res.mode, res.operator, res.unit, res.observed)
 end
 
+--- symbol_options returns the options carried by the rspamd symbol for a
+--- confirmed operator, and none for any other outcome.
+---
+--- The first is "<operator>:<declared unit>", as it has always been. The
+--- second names the observed unit. A consumer that reads symbol options and
+--- never sees the header would otherwise have only the publisher's claim to
+--- key on, and would pool every /64 seen under a declared /48 into one
+--- reputation unit on the publisher's say-so.
+function authres.symbol_options(res)
+  if not res or res.outcome ~= 'pass' then return {} end
+  return {
+    string.format('%s:%s', res.operator, res.unit),
+    'observed=' .. res.observed,
+  }
+end
+
 --- kind classifies an outcome for symbol selection. Testing is its own kind
 --- so an operator can see trial traffic distinctly, and so it can never be
 --- counted as a pass.

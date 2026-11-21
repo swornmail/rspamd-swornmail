@@ -9,3 +9,14 @@ _prefixes._sworn.mailer.example.com.	IN	TXT	"v=SWORN1; p=2001:db8:f00::/48; u=64
 ; A second operator that publishes t=y, for the testing-mode case
 _sworn.9.9.9.9.0.0.f.0.8.b.d.0.1.0.0.2.ip6.arpa.	IN	TXT	"v=SWORN1; d=trial.example.com"
 _prefixes._sworn.trial.example.com.	IN	TXT	"v=SWORN1; p=2001:db8:f00::/48; u=64; t=y"
+
+; An operator found only through rDNS: no reverse-tree pointer, so discovery
+; has to resolve the PTR and forward-confirm it itself.
+5.2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.1.0.0.0.c.b.a.0.8.b.d.0.1.0.0.2.ip6.arpa.	IN	PTR	mx1.fcrdns.example.net.
+mx1.fcrdns.example.net.	IN	AAAA	2001:db8:abc:1::25
+; It declares the whole /48 as its unit, wider than the /64 a connection shows.
+_prefixes._sworn.fcrdns.example.net.	IN	TXT	"v=SWORN1; p=2001:db8:abc::/48; u=48"
+; A host inside the same /48 naming itself into that operator's domain: its
+; PTR points at a name whose AAAA is some other address.
+5.2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.2.0.0.0.c.b.a.0.8.b.d.0.1.0.0.2.ip6.arpa.	IN	PTR	mx2.fcrdns.example.net.
+mx2.fcrdns.example.net.	IN	AAAA	2001:db8:abc:ffff::1

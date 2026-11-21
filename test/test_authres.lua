@@ -35,6 +35,21 @@ t.test('quotes the unit', function()
     'a coarse declared unit still reports the observed /64')
 end)
 
+-- A consumer reading only symbol options must be able to tell the /64 this
+-- connection corroborated from the unit the publisher declared, or it pools
+-- every /64 under a declared /32 into one reputation unit.
+t.test('symbol options carry the observed unit next to the declared one', function()
+  local opts = authres.symbol_options(COARSE)
+  t.eq(#opts, 2, 'two options')
+  t.eq(opts[1], 'tenant.example:2001:db8::/32', 'first option keeps its layout: operator and declared unit')
+  t.eq(opts[2], 'observed=2001:db8:f00:1234::/64', 'second option is the observed unit')
+  t.eq(#authres.symbol_options(OBSERVING), 2, 'a testing operator carries both too')
+  for _, res in ipairs({ { outcome = 'none' }, { outcome = 'temperror' } }) do
+    t.eq(#authres.symbol_options(res), 0, 'no options for ' .. res.outcome)
+  end
+  t.eq(#authres.symbol_options(nil), 0, 'no options for a missing result')
+end)
+
 t.test('classifies outcomes for symbol selection', function()
   t.eq(authres.kind(PASS), 'pass', 'pass')
   t.eq(authres.kind(OBSERVING), 'testing', 'testing is never pass')

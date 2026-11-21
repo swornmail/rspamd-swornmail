@@ -54,6 +54,34 @@ t.test('reports every config that keeps forged results', function()
     -- milter_headers runs a custom routine instead of a built-in one with
     -- the same name.
     { 'custom routine shadows the built-in', with({ custom = { ['authentication-results'] = 'return function() end' } }), 'custom' },
+    -- Routines share one removal table and the last to write wins, so each
+    -- of these replaces "remove every field" with "remove the first": the
+    -- attacker sends two forged fields and the second one stays.
+    { 'remove-headers narrows it afterwards', with({
+      use = { 'authentication-results', 'remove-headers' },
+      routines = { ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } } },
+    }), 'remove-headers runs after' },
+    { 'remove-header narrows it afterwards', with({
+      use = { 'authentication-results', 'remove-header' },
+      routines = { ['remove-header'] = { header = 'Authentication-Results', remove = 2 } },
+    }), 'remove-header runs after' },
+    { 'add-headers narrows it afterwards', with({
+      use = { 'authentication-results', 'add-headers' },
+      routines = { ['add-headers'] = { headers = { ['Authentication-Results'] = 'x' }, remove = 1 } },
+    }), 'add-headers runs after' },
+    { 'a renamed routine narrows it afterwards', with({
+      use = { 'authentication-results', 'x-spamd-bar' },
+      routines = { ['x-spamd-bar'] = { header = 'Authentication-Results', remove = 1 } },
+    }), 'x-spamd-bar runs after' },
+    -- The key has to match the header name authentication-results was
+    -- given, whatever that is.
+    { 'narrowed under a renamed header', with({
+      use = { 'authentication-results', 'remove-headers' },
+      routines = {
+        ['authentication-results'] = { header = 'authentication-results' },
+        ['remove-headers'] = { headers = { ['authentication-results'] = 1 } },
+      },
+    }), 'remove-headers runs after' },
     -- A compromised account can forge results for local recipients.
     { 'authenticated senders skipped', with({ authenticated_headers = {} }), 'authenticated_headers' },
     -- Behind a proxy or NAT every connection looks local, so this can cover
@@ -77,6 +105,29 @@ t.test('accepts other ways of stripping for every sender', function()
     'header name in another case')
   t.eq(#stripping.gaps(with({ use = { 'x-spamd-bar', 'authentication-results' } })), 0,
     'routine alongside others')
+  -- A routine that runs first is overwritten by authentication-results.
+  t.eq(#stripping.gaps(with({
+    use = { 'remove-headers', 'authentication-results' },
+    routines = { ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } } },
+  })), 0, 'remove-headers listed before the routine')
+  t.eq(#stripping.gaps(with({
+    use = { 'authentication-results', 'remove-headers' },
+    routines = { ['remove-headers'] = { headers = { ['Authentication-Results'] = 0, ['X-Old'] = 1 } } },
+  })), 0, 'a later routine that also removes every field')
+  -- Another spelling is a separate entry in the removal table, so the
+  -- "remove every field" entry is still sent; checked against 4.2.2.
+  t.eq(#stripping.gaps(with({
+    use = { 'authentication-results', 'remove-headers' },
+    routines = { ['remove-headers'] = { headers = { ['authentication-results'] = 1 } } },
+  })), 0, 'a later routine keyed in another case')
+  t.eq(#stripping.gaps(with({
+    use = { 'authentication-results', 'add-headers' },
+    routines = { ['add-headers'] = { headers = { ['X-Note'] = 'x' }, remove = 1 } },
+  })), 0, 'a later routine touching other headers')
+  -- Configured but not in use, so it never runs.
+  t.eq(#stripping.gaps(with({
+    routines = { ['remove-headers'] = { headers = { ['Authentication-Results'] = 1 } } },
+  })), 0, 'a narrowing routine that is not in use')
   -- milter_headers turns a single name into a list; checked against 4.2.2.
   t.eq(#stripping.gaps(with({ use = 'authentication-results' })), 0, 'routine named on its own')
 end)

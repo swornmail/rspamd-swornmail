@@ -5,6 +5,8 @@
 swornmail {
   enabled = true;
   lib_path = "/etc/rspamd/lua";
-  use_mta_hostname = true;
+  # Turn on only if every scan client is an MTA that reports forward-confirmed
+  # names and nothing else; see the README.
+  use_mta_hostname = false;
   # authserv_id = "mx.example.com";
 }

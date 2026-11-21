@@ -179,16 +179,38 @@ t.test('returns temperror on a temporary DNS failure', function()
 end)
 
 t.test('returns temperror when the query budget is exhausted', function()
-  -- A long candidate chain must not silently answer none: that would let an
-  -- attacker suppress attestation by padding the walk.
-  local host = 'a.b.c.d.e.f.g.mailer.example.com'
-  local r = fake({
+  -- Padding the walk: two misdirected pointers and their policy lookups
+  -- (4 queries), the PTR and its forward confirmation (6), then a deep
+  -- hostname whose first four candidates publish nothing (10). The fifth
+  -- candidate holds the real policy and would be the eleventh query.
+  -- Answering none here would let an attacker suppress attestation by
+  -- padding, and asking anyway would make the budget no bound at all.
+  local host = 'a.b.c.d.mailer.example.com'
+  local spec = {
+    txt = {
+      [REV64] = { 'v=SWORN1; d=pad1.example.org' },
+      [REV48] = { 'v=SWORN1; d=pad2.example.org' },
+      ['_prefixes._sworn.mailer.example.com'] = { POLICY },
+    },
     ptr = { [SRC] = { host .. '.' } },
     aaaa = { [host] = { SRC } },
-  })
+  }
+  t.eq(discovery.MAX_QUERIES, 10, 'the budget this walk is sized for')
+  local r = fake(spec)
   local res = discovery.run(r, SRC)
-  t.ok(res.outcome == 'none' or res.outcome == 'temperror', 'bounded outcome')
-  t.ok(res.queries <= discovery.MAX_QUERIES, 'never exceeds the budget')
+  t.eq(res.outcome, 'temperror', 'exhaustion is a temporary error, never none')
+  t.eq(res.queries, 10, 'the whole budget was spent')
+  t.eq(r.calls.n, 10, 'no eleventh resolver call')
+  t.is_nil(res.operator, 'no operator is named on exhaustion')
+
+  -- One query fewer on the way and the same records pass with the budget
+  -- exactly spent, so the cutoff above is the budget and nothing else.
+  spec.txt[REV48] = nil
+  local last = fake(spec)
+  local within = discovery.run(last, SRC)
+  t.eq(within.outcome, 'pass', 'the tenth query is still made')
+  t.eq(within.queries, 10, 'on the last query of the budget')
+  t.eq(last.calls.n, 10, 'ten resolver calls')
 end)
 
 t.test('answers none for ineligible sources', function()

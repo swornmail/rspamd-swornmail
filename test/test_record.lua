@@ -37,6 +37,23 @@ t.test('reads testing flags', function()
   end
 end)
 
+-- What a resolver hands over is untrusted, octet for octet. A valid record
+-- followed by an octet outside printable ASCII is rejected whole, never read
+-- up to that octet: "the valid part" is whatever an attacker chose it to be.
+t.test('rejects a record holding an octet outside printable ASCII', function()
+  local cases = {
+    { 'NUL then more data', 'v=SWORN1; p=2001:db8:f00::/48\0,2001:db8:eee::/48; u=64' },
+    { 'trailing NUL', 'v=SWORN1; p=2001:db8:f00::/48; u=64\0' },
+    { 'UTF-8 in a value', 'v=SWORN1; p=2001:db8:f00::/48; u=64; x=\195\169' },
+    { 'DEL', 'v=SWORN1; p=2001:db8:f00::/48; u=64\127' },
+  }
+  for _, c in ipairs(cases) do
+    t.is_nil(record.parse_policy(c[2]), 'policy: ' .. c[1])
+  end
+  t.is_nil(record.parse_pointer('v=SWORN1; d=mailer.example.com\0.evil.example'), 'pointer: NUL then more data')
+  t.is_nil(record.parse_pointer('v=SWORN1; d=m\195\169.example.com'), 'pointer: UTF-8 in the domain')
+end)
+
 t.test('rejects malformed policy records', function()
   for _, bad in ipairs({
     '',

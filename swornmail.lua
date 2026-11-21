@@ -37,10 +37,12 @@ local settings = {
   -- stripping rule keys on. Set it explicitly when rspamd's hostname is not
   -- the ADMD's public identity.
   authserv_id = nil,
-  -- Trust the MTA's rDNS name when it supplies one. Under a Postfix milter a
-  -- non-nil hostname has already been forward-confirmed, so accepting it
-  -- saves two queries. Set false to always confirm here instead.
-  use_mta_hostname = true,
+  -- Take the client hostname the scan request carries as already
+  -- forward-confirmed, saving two queries. Off by default: whoever sends the
+  -- request chooses that name, and rspamd does not check it. Turn it on only
+  -- when every scan client is an MTA that reports nothing but
+  -- forward-confirmed names, as Postfix is documented to.
+  use_mta_hostname = false,
   -- IPv6 prefixes never matched to an operator: your NAT64 or SIIT
   -- translation prefixes, and any of your own relays that carry outside
   -- traffic. Every translated client appears inside such a prefix, so a
@@ -62,12 +64,14 @@ package.path = settings.lib_path .. '/?.lua;' .. package.path
 local ok_lib, discovery = pcall(require, 'sworn.discovery')
 local ok_ar, authres = pcall(require, 'sworn.authres')
 local ok_strip, stripping = pcall(require, 'sworn.stripping')
-if not ok_lib or not ok_ar or not ok_strip then
+local ok_reply, dnsreply = pcall(require, 'sworn.dnsreply')
+if not ok_lib or not ok_ar or not ok_strip or not ok_reply then
   -- A half-installed module must not take rspamd down with it.
   lua_util.disable_module(N, 'config')
   rspamd_logger.errx(rspamd_config,
     'swornmail: cannot load the sworn library from %s — check lib_path (%s)',
-    settings.lib_path, discovery)
+    settings.lib_path,
+    not ok_lib and discovery or not ok_ar and authres or not ok_strip and stripping or dnsreply)
   return
 end
 
@@ -80,29 +84,20 @@ if not ineligible then
   return
 end
 
--- Error strings librdns reports for a definite negative answer. Anything else
--- is a temporary failure and must not be reported as "no attestation":
--- treating a resolver outage as a negative answer would let an attacker
--- suppress attestation by disrupting DNS.
-local DEFINITE_NEGATIVE = {
-  ['no records with this name'] = true,
-  ['requested record is not found'] = true,
-}
-
 --- make_resolver adapts rspamd's coroutine DNS API to the contract the
 --- discovery module expects: results, or nil plus a temporary-error string,
---- or nil, nil for a definite negative.
+--- or nil, nil for a definite negative. sworn.dnsreply decides which.
+---
+--- rspamd hands TXT data over as a C string, so a record with a NUL octet in
+--- it arrives cut off at that octet and the rest is never seen here. The
+--- parser rejects every other octet outside printable ASCII, but this one it
+--- cannot: see "Limitations" in the README.
 local function make_resolver(task)
   local function query(kind, name)
     local ok, results = rspamd_dns.request({ task = task, type = kind, name = name })
     lua_util.debugm(N, task, 'dns %s %s -> ok=%s first=%s', kind, name, tostring(ok),
       type(results) == 'table' and tostring(results[1]) or tostring(results))
-    if ok then return results, nil end
-    -- A nil first return means the request could not be scheduled at all
-    -- (per-task DNS cap) — a resource limit, so temporary.
-    if ok == nil then return nil, 'request not scheduled' end
-    if type(results) == 'string' and DEFINITE_NEGATIVE[results] then return nil, nil end
-    return nil, results or 'dns error'
+    return dnsreply.read(kind, ok, results)
   end
 
   return {
@@ -112,14 +107,23 @@ local function make_resolver(task)
   }
 end
 
---- verified_hostname returns the MTA-supplied rDNS name when it can be
---- trusted. Postfix reports nothing usable when forward confirmation failed,
---- so a plain name here has already passed FCrDNS; anything else and
---- discovery confirms it itself.
+--- verified_hostname returns the client hostname the scan request carried,
+--- when the operator has said its scan clients can be trusted for it.
+--- Postfix reports "unknown" or a bracketed address when forward confirmation
+--- failed, so a plain name from it has already passed FCrDNS; anything else
+--- and discovery confirms it itself.
+---
+--- The request header is read on purpose, not task:get_hostname(). When the
+--- MTA supplies no usable name, a stock rspamd rule fills that slot from a
+--- PTR lookup of its own that it never forward-confirms, and other plugins
+--- write header-derived names there. Taking that as verified would let a
+--- host name itself into an operator's domain exactly when its MTA had
+--- refused to vouch for it.
 local function verified_hostname(task)
   if not settings.use_mta_hostname then return nil end
-  local host = task:get_hostname()
-  if not host or host == '' or host:sub(1, 1) == '[' then return nil end
+  local hdr = task:get_request_header('Hostname')
+  local host = hdr and tostring(hdr) or ''
+  if host == '' or host:sub(1, 1) == '[' or host:lower() == 'unknown' then return nil end
   return host
 end
 
@@ -135,11 +139,7 @@ local function check_sworn(task)
   })
 
   local symbol = settings['symbol_' .. authres.kind(res)]
-  local option
-  if res.outcome == 'pass' then
-    option = string.format('%s:%s', res.operator, res.unit)
-  end
-  task:insert_result(symbol, 1.0, option)
+  task:insert_result(symbol, 1.0, (table.unpack or unpack)(authres.symbol_options(res)))
 
   -- rspamd's own Authentication-Results generator has a fixed method list,
   -- so the sworn= result goes out as a second field, which RFC 8601 section 4
